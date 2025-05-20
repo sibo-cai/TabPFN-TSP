@@ -46,11 +46,8 @@ train_tsdf, test_tsdf = FeatureTransformer.add_features(
 from tabpfn_time_series import TabPFNTimeSeriesPredictor, TabPFNMode
 
 # you may want to set your own tabpfn token
-from tabpfn_client import set_access_token
+# from tabpfn_client import set_access_token
 # set_access_token(your_tabpfn_token)
-set_access_token(
-    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyIjoiMTdkNjgyNjItZDdjYS00OThlLTgyNDEtMjZiZjhlOTdmOGZkIiwiZXhwIjoxNzc2OTI0NTA4fQ.lbmLZWFlLQ8jZgDqt69gwLGW3gKhev0NmsM3mOGcBzQ'
-)
 
 # tabpfn setup, copy from the default setup TABPFN_TS_DEFAULT_CONFIG
 # fix the random state for result reproduction
