@@ -1,7 +1,7 @@
 # Implementation and experiments of TabPFN-TSP, a TabPFN-based time series prediction method
 # utilizing the intrinsic periodicity of data
 # Author: Sibo Cai
-# Last modified date：2025-5-19
+# Last modified：2025-6-13
 
 import pandas as pd
 import numpy as np
@@ -91,39 +91,49 @@ def calculate_top_k_periods(csv_file_path, target_column, pred_len, k=1, show=Tr
     return top_k_periods
 
 
-def prepare_tabpfn_input(dataset_choice, item_id, target_column, period, y_test_n_period, y_train_n_period):
+def prepare_tabpfn_input(dataset_choice, item_id, target_column, periods, y_test_len, y_train_len):
     print("Preparing tabpfn input...")
-    y_test_len = y_test_n_period * period
-    y_train_len = y_train_n_period * period
-    y_len = y_train_len + y_test_len
 
     csv_file_path = f'./autogluon/{dataset_choice}_item_{item_id}.csv'
     df = pd.read_csv(csv_file_path)
     data = df[target_column]
-
     data_size = len(data)
-    # number of periods
-    n_period = data_size // period
-    # remaining data (beginning of the data) not used
-    remaining = data_size - period * n_period
+    y_len = y_train_len + y_test_len
+    # only data within visible length can be used for prediction of y_test
+    visible_len = data_size - y_test_len
+    y_start_index = data_size - y_len
+    y_data = data[y_start_index:]
 
-    data_reshaped = []
-    for i in range(n_period - y_test_n_period - y_train_n_period + 1):
-        data_section = data[remaining + i * period:remaining + i * period + y_len]
-        data_reshaped.append(data_section)
+    output_data = [y_data]
 
-    # remove y_test data (whole column) from X if there is any
-    for i_remove in range(y_test_n_period - 1):
-        data_reshaped.pop(-2)
+    # different period may produce some duplicated x_start_index,
+    # x_start_candidate_indices help take care of such cases
+    x_start_candidate_indices = [y_start_index-p for p in periods]
+    x_start_index = max(x_start_candidate_indices)
+    x_start_index_i = x_start_candidate_indices.index(x_start_index)
+    last_x_start_index = -1
+    while x_start_index >= 0:
+        x_last_index = x_start_index + y_len
+        # x index is not duplicated one and it is within visible length
+        if x_start_index != last_x_start_index and x_last_index <= visible_len:
+            x_indices = [x for x in range(x_start_index, x_last_index)]
+            x_data = data[x_indices]
+            output_data.append(x_data)
 
-    n_column = len(data_reshaped)
+        x_start_candidate_indices[x_start_index_i] -= periods[x_start_index_i]
+        last_x_start_index = x_start_index
+        x_start_index = max(x_start_candidate_indices)
+        x_start_index_i = x_start_candidate_indices.index(x_start_index)
+
+    output_data.reverse()
+
+    n_column = len(output_data)
     headers = [str(x) for x in range(n_column)]
-    output_df = pd.DataFrame(np.transpose(data_reshaped).tolist(), columns=headers)
+    output_df = pd.DataFrame(np.transpose(output_data).tolist(), columns=headers)
     output_df.to_csv(f'./autogluon/{dataset_choice}_item_{item_id}_s{y_len}_n{n_column}.csv', index=False)
 
-    # In fact, y_len is the vertical dimension and n_column is the horizontal dimension
-    # of the data that input to tabpfn
-    return y_len, n_column
+    # n_column is the horizontal dimension of the data that input to tabpfn
+    return n_column
 
 
 def run_tabpfn(csv_file_path, target_column, train_ratio, show=True):
@@ -171,46 +181,80 @@ def main():
 
     # load the test datasets and save them in desired format,
     # check and run it at the very beginning
-
     # load_and_save_test_cases()
 
-    # setup
-    dataset_choice = 'm4_hourly'  # monash_tourism_monthly or m4_hourly
-    item_id = 1
-    prediction_len = 48           # 24 for monash_tourism_monthly, 48 for m4_hourly
+    # setups
+    setups = [
+        {'dataset_choice': 'monash_tourism_monthly', 'item_id': 0, 'y_test_len': 24, 'y_train_len': 12},    # 0
+        {'dataset_choice': 'monash_tourism_monthly', 'item_id': 0, 'y_test_len': 24, 'y_train_len': 24},    # 1
+        {'dataset_choice': 'monash_tourism_monthly', 'item_id': 0, 'y_test_len': 24, 'y_train_len': 36},    # 2
+        {'dataset_choice': 'monash_tourism_monthly', 'item_id': 0, 'y_test_len': 24, 'y_train_len': 48},    # 3
+        {'dataset_choice': 'monash_tourism_monthly', 'item_id': 0, 'y_test_len': 12, 'y_train_len': 12},    # 4
+        {'dataset_choice': 'monash_tourism_monthly', 'item_id': 0, 'y_test_len': 12, 'y_train_len': 24},    # 5
+        {'dataset_choice': 'monash_tourism_monthly', 'item_id': 0, 'y_test_len': 12, 'y_train_len': 36},    # 6
+        {'dataset_choice': 'monash_tourism_monthly', 'item_id': 0, 'y_test_len': 12, 'y_train_len': 48},    # 7
+        {'dataset_choice': 'monash_tourism_monthly', 'item_id': 1, 'y_test_len': 24, 'y_train_len': 12},    # 8
+        {'dataset_choice': 'monash_tourism_monthly', 'item_id': 1, 'y_test_len': 24, 'y_train_len': 24},    # 9
+        {'dataset_choice': 'monash_tourism_monthly', 'item_id': 1, 'y_test_len': 24, 'y_train_len': 36},    # 10
+        {'dataset_choice': 'monash_tourism_monthly', 'item_id': 1, 'y_test_len': 24, 'y_train_len': 48},    # 11
+        {'dataset_choice': 'monash_tourism_monthly', 'item_id': 1, 'y_test_len': 12, 'y_train_len': 12},    # 12
+        {'dataset_choice': 'monash_tourism_monthly', 'item_id': 1, 'y_test_len': 12, 'y_train_len': 24},    # 13
+        {'dataset_choice': 'monash_tourism_monthly', 'item_id': 1, 'y_test_len': 12, 'y_train_len': 36},    # 14
+        {'dataset_choice': 'monash_tourism_monthly', 'item_id': 1, 'y_test_len': 12, 'y_train_len': 48},    # 15
+        {'dataset_choice': 'm4_hourly', 'item_id': 0, 'y_test_len': 48, 'y_train_len': 24},                 # 16
+        {'dataset_choice': 'm4_hourly', 'item_id': 0, 'y_test_len': 48, 'y_train_len': 48},                 # 17
+        {'dataset_choice': 'm4_hourly', 'item_id': 0, 'y_test_len': 48, 'y_train_len': 72},                 # 18
+        {'dataset_choice': 'm4_hourly', 'item_id': 0, 'y_test_len': 48, 'y_train_len': 96},                 # 19
+        {'dataset_choice': 'm4_hourly', 'item_id': 0, 'y_test_len': 24, 'y_train_len': 24},                 # 20
+        {'dataset_choice': 'm4_hourly', 'item_id': 0, 'y_test_len': 24, 'y_train_len': 48},                 # 21
+        {'dataset_choice': 'm4_hourly', 'item_id': 0, 'y_test_len': 24, 'y_train_len': 72},                 # 22
+        {'dataset_choice': 'm4_hourly', 'item_id': 0, 'y_test_len': 24, 'y_train_len': 96},                 # 23
+        {'dataset_choice': 'm4_hourly', 'item_id': 1, 'y_test_len': 48, 'y_train_len': 24},                 # 24
+        {'dataset_choice': 'm4_hourly', 'item_id': 1, 'y_test_len': 48, 'y_train_len': 48},                 # 25
+        {'dataset_choice': 'm4_hourly', 'item_id': 1, 'y_test_len': 48, 'y_train_len': 72},                 # 26
+        {'dataset_choice': 'm4_hourly', 'item_id': 1, 'y_test_len': 48, 'y_train_len': 96},                 # 27
+        {'dataset_choice': 'm4_hourly', 'item_id': 1, 'y_test_len': 24, 'y_train_len': 24},                 # 28
+        {'dataset_choice': 'm4_hourly', 'item_id': 1, 'y_test_len': 24, 'y_train_len': 48},                 # 29
+        {'dataset_choice': 'm4_hourly', 'item_id': 1, 'y_test_len': 24, 'y_train_len': 72},                 # 30
+        {'dataset_choice': 'm4_hourly', 'item_id': 1, 'y_test_len': 24, 'y_train_len': 96}                  # 31
+    ]
+    select_i = 25
+    dataset_choice = setups[select_i]['dataset_choice']
+    item_id = setups[select_i]['item_id']
     # m
-    y_test_n_period = 2
+    y_test_len = setups[select_i]['y_test_len']
     # l
-    y_train_n_period = 2
+    y_train_len = setups[select_i]['y_train_len']
 
     top_periods = calculate_top_k_periods(
         csv_file_path=f'./autogluon/{dataset_choice}_item_{item_id}.csv',
         target_column='target',
-        pred_len=prediction_len,
+        pred_len=y_test_len,
         show=False
     )
 
-    # use the top most period
-    period = top_periods[0]
+    # use the top period, enough for the test dataset
+    selected_periods = top_periods[:1]
+    y_len = y_test_len + y_train_len
 
-    y_len, n_column = prepare_tabpfn_input(
+    n_column = prepare_tabpfn_input(
         dataset_choice=dataset_choice,
         item_id=item_id,
         target_column='target',
-        period=period,
-        y_test_n_period=y_test_n_period,
-        y_train_n_period=y_train_n_period
+        periods=selected_periods,
+        y_test_len=y_test_len,
+        y_train_len=y_train_len
     )
 
     result = run_tabpfn(
         f'./autogluon/{dataset_choice}_item_{item_id}_s{y_len}_n{n_column}.csv',
         target_column=str(n_column - 1),
-        train_ratio=y_train_n_period / (y_train_n_period + y_test_n_period)
+        train_ratio=y_train_len / (y_train_len + y_test_len)
     )
 
     print('---------------------------------------')
-    print(f'datsset: {dataset_choice}, item id: {item_id}, prediction length: {prediction_len}')
-    print(f'y_test periods (m): {y_test_n_period}, y_train periods (l): {y_train_n_period}')
+    print(f'dataset: {dataset_choice}, item id: {item_id}')
+    print(f'y test length (m): {y_test_len}, y_train length (l): {y_train_len}')
     print(f'MAE: {result[0]}')
 
 
